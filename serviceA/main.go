@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 
+
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -15,32 +16,27 @@ import (
 
 )
 
+// type cep 
 const name = "serviceA"
 
 var (
 	tracer = otel.Tracer(name)
-	meter  = otel.Meter(name)
-	logger = otelslog.NewLogger(name)
+
 	cep string
 	typecep	string
 )
-
-func init(){
-	var err error
-	cep, err
-}
 func typeofObject(variable interface{}) string {
 	return fmt.Sprintf("%T", variable)
  }
  
 func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
-	ctx, span := tracer.Start(r.Context())
-	defer span.End()
+	// ctx, span := tracer.Start(r.Context())
+	// defer span.End()
 
 	cep := r.URL.Query().Get("cep")
 	typecep:= typeofObject(cep)
 	if len(cep) == 8 && typecep == "string" {
-		logger.InfoContext(ctx, cep,  )
+		// logger.InfoContext(ctx, cep,  )
 		// https://opentelemetry.io/docs/languages/go/getting-started/
 		body, _ := json.Marshal(map[string]string{
 			"cep": cep,
@@ -64,4 +60,10 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 
 		fmt.Printf("%s", body)
 	}
+}
+
+func main(){
+	http.HandleFunc("/", cepValidatorHandler)
+	http.ListenAndServe(":8080", nil)
+
 }
