@@ -49,7 +49,7 @@ func startOtel(ctx context.Context) {
 	if err != nil {
 		slog.Error("startOtel", "Contexterr", "failed to create context")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	conn, err := grpc.NewClient("otel-collector:4317", grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -153,7 +153,7 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 	// validades cep
 	if len(cepValue) == 8 && typecep == "string" {
 
-		url := "http://localhost:8081/?cep=" + cepValue
+		url := "http://serviceb:8081/?cep=" + cepValue
 		req, err := http.NewRequestWithContext(ctx, "get", url, nil)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -165,7 +165,8 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 		res, err := zipkinClient.Do(req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			slog.Error(err.Error())
+			slog.Error("cepValidatorHandler", "err", err.Error())
+			return
 		}
 		slog.Info("status", "code", res.StatusCode)
 		switch res.StatusCode {
