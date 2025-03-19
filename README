@@ -1,2 +1,0 @@
-jaeger http://localhost:16686/ (selecionar Service 'servicoa')
-zipkin http://localhost:9411/ (query serviceName=servicoa)
