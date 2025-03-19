@@ -151,7 +151,7 @@ func main() {
 	}
 
 	ctx = context.Background()
-	ctx, span := OtelTracer.Start(ctx, "serviceB")
+	ctx, span := OtelTracer.Start(ctx, "service B")
 	defer span.End()
 
 	zipkinClient, err = zipkinhttp.NewClient(tracer, zipkinhttp.ClientTrace(true))
@@ -162,39 +162,17 @@ func main() {
 	serverMidleware := zipkinhttp.NewServerMiddleware(tracer, zipkinhttp.TagResponseSize(true))
 
 	http.Handle("/", serverMidleware(router))
-	router.HandleFunc("/", testcep)
+	router.HandleFunc("/", cepHandler)
 
-	http.ListenAndServe(":8081", router)
+	http.ListenAndServe(":8081", nil)
 
-	slog.Info("serviceB started")
+	slog.Info("serviceB ended")
 	select {
 	case <-channel:
 		slog.Info("serviceB was stopped")
 	case <-ctx.Done():
 		slog.Info("serviceB stopped naturally")
 	}
-}
-
-func testcep(w http.ResponseWriter, r *http.Request) {
-	carrier := propagation.HeaderCarrier(r.Header)
-	ctx := r.Context()
-	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
-	ctx, span := OtelTracer.Start(ctx, "serviceB")
-	defer span.End()
-
-	zspan := zipkin.SpanFromContext(r.Context())
-	ctx = zipkin.NewContext(ctx, zspan)
-
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	cep := r.URL.Query().Get("cep")
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"cep": cep,
-				})
 }
 
 func cepHandler(w http.ResponseWriter, r *http.Request) {
@@ -212,19 +190,16 @@ func cepHandler(w http.ResponseWriter, r *http.Request) {
 
 	cep := r.URL.Query().Get("cep")
 
-	// request para pegar localidade
-	// temp 
-	// status
-	// message
-	// err
+	
 	url := "http://viacep.com.br/ws/" + cep + "/json/"
 
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(r.Header))
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := zipkinClient.Do(req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
