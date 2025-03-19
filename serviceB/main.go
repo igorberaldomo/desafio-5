@@ -1,18 +1,35 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
-
 	"fmt"
 	"io"
-
+	"log"
+	"log/slog"
+	"net"
 	"net/http"
 	neturl "net/url"
 	"os"
+	"os/signal"
+	"time"
+	"strings"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	opensemconv "go.opentelemetry.io/otel/semconv/v1.21.0"
+	"go.opentelemetry.io/otel/trace"
 
-
+	"github.com/openzipkin/zipkin-go"
+	zipkinhttp "github.com/openzipkin/zipkin-go/middleware/http"
+	"github.com/openzipkin/zipkin-go/model"
+	zipikinreporter "github.com/openzipkin/zipkin-go/reporter/http"
 )
 
 type ViaCEP struct {
@@ -75,80 +92,227 @@ type Weather struct {
 	} `json:"current"`
 }
 
+var OtelTracer trace.Tracer
+var zipkinClient *zipkinhttp.Client
+
+func startOtel(ctx context.Context) {
+	res, err := resource.New(ctx, resource.WithAttributes(
+		opensemconv.ServiceNameKey.String("serviceB"),
+	),
+	)
+	if err != nil {
+		slog.Error("startOtel", "Contexterr", "failed to create context")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	conn, err := grpc.NewClient("otel-collector:4317", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		slog.Error("startOtel", "GRPCerr", "failed to create GRPC conection")
+	}
+	traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
+	if err != nil {
+		slog.Error("startOtel", "Traceerr", "failed to create trace exporter")
+	}
+	bsp := sdktrace.NewBatchSpanProcessor(traceExporter)
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(
+		sdktrace.AlwaysSample()),
+		sdktrace.WithResource(res),
+		sdktrace.WithSpanProcessor(bsp),
+	)
+
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	OtelTracer = otel.Tracer("tracer")
+
+}
+
+func main() {
+	channel := make(chan os.Signal, 1)
+	signal.Notify(channel, os.Interrupt)
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	startOtel(ctx)
+
+	reporter := zipikinreporter.NewReporter("http://zipkin-all-in-one:9411/api/v2/spans")
+	serviceBEndpoint := &model.Endpoint{
+		ServiceName: "serviceB",
+		IPv4:        getOutboundIP(),
+		Port:        8081}
+	sampler, err := zipkin.NewCountingSampler(1)
+	if err != nil {
+		log.Fatal(err)
+	}
+	tracer, err := zipkin.NewTracer(reporter, zipkin.WithLocalEndpoint(serviceBEndpoint), zipkin.WithSampler(sampler))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	ctx = context.Background()
+	ctx, span := OtelTracer.Start(ctx, "serviceB")
+	defer span.End()
+
+	zipkinClient, err = zipkinhttp.NewClient(tracer, zipkinhttp.ClientTrace(true))
+	if err != nil {
+		log.Fatal(err)
+	}
+	router := http.NewServeMux()
+	serverMidleware := zipkinhttp.NewServerMiddleware(tracer, zipkinhttp.TagResponseSize(true))
+
+	http.Handle("/", serverMidleware(router))
+	router.HandleFunc("/", testcep)
+
+	http.ListenAndServe(":8081", router)
+
+	slog.Info("serviceB started")
+	select {
+	case <-channel:
+		slog.Info("serviceB was stopped")
+	case <-ctx.Done():
+		slog.Info("serviceB stopped naturally")
+	}
+}
+
+func testcep(w http.ResponseWriter, r *http.Request) {
+	carrier := propagation.HeaderCarrier(r.Header)
+	ctx := r.Context()
+	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+	ctx, span := OtelTracer.Start(ctx, "serviceB")
+	defer span.End()
+
+	zspan := zipkin.SpanFromContext(r.Context())
+	ctx = zipkin.NewContext(ctx, zspan)
+
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	cep := r.URL.Query().Get("cep")
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"cep": cep,
+				})
+}
 
 func cepHandler(w http.ResponseWriter, r *http.Request) {
+	carrier := propagation.HeaderCarrier(r.Header)
+	ctx := r.Context()
+	ctx = otel.GetTextMapPropagator().Extract(ctx, carrier)
+	ctx, span := OtelTracer.Start(ctx, "serviceB")
+	defer span.End()
+
+	zspan := zipkin.SpanFromContext(r.Context())
+	ctx = zipkin.NewContext(ctx, zspan)
+
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
 	cep := r.URL.Query().Get("cep")
 
 	// request para pegar localidade
-	if len(cep) == 8 {
-		req, err := http.Get("http://viacep.com.br/ws/" + cep + "/json/")
-		if err != nil {
-			fmt.Println("error in requisition via CEP")
-		}
-		if req.StatusCode != 200 {
-			if req.StatusCode == 400 {
-				err = fmt.Errorf("bad request")
-				fmt.Println(err)
-				os.Exit(1)
-			}
-			if req.StatusCode == 404 {
-				err = fmt.Errorf("can not find zipcode")
-				fmt.Println(err)
-				os.Exit(1)
-			}
-			if req.StatusCode == 422 {
-				err = fmt.Errorf("invalid  zipcode")
-				fmt.Println(err)
-				os.Exit(1)
-			}
-		}
+	// temp 
+	// status
+	// message
+	// err
+	url := "http://viacep.com.br/ws/" + cep + "/json/"
 
-		defer req.Body.Close()
-
-		res, err := io.ReadAll(req.Body)
-		if err != nil {
-			fmt.Println("error in reading the body via CEP")
-		}
-		var data ViaCEP
-		fmt.Println(data)
-		err = json.Unmarshal(res, &data)
-		if err != nil {
-			fmt.Println("error in unmarshal via CEP")
-		}
-		local := data.Localidade
-
-		url := "http://api.weatherapi.com/v1/current.json?key=18525c8de5ac479f994185201250303&q=" + neturl.QueryEscape(local) + "&aqi=no"
-
-		// novo request para pegar a temperatura
-		req2, err2 := http.Get(url)
-		if err2 != nil {
-			fmt.Println("error in requisition via WeatherAPI")
-		}
-		defer req2.Body.Close()
-
-		res2, err2 := io.ReadAll(req2.Body)
-		if err2 != nil {
-			fmt.Println("error in reading the body via WeatherAPI")
-		}
-		var data2 Weather
-		err2 = json.Unmarshal(res2, &data2)
-		if err2 != nil {
-			fmt.Println("error in unmarshal via WeatherAPI")
-		}
-
-		tempC := data2.Current.TempC
-		tempF := tempC*1.8 + 32
-		tempK := tempC + 273
-
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"city":   local,
-			"temp_C": tempC,
-			"temp_F": tempF,
-			"temp_K": tempK,
-		})
-	} else {
-		return
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+
+	switch res.StatusCode {
+		case http.StatusBadRequest :
+				err = fmt.Errorf("invalid  zipcode in viacep")
+				fmt.Println(err)
+				os.Exit(1)
+		case http.StatusNotFound :
+				err = fmt.Errorf("can not find zipcode in viacep")
+				fmt.Println(err)
+				os.Exit(1)
+		case http.StatusOK :
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			defer res.Body.Close()
+			if strings.Contains(string(body), `"erro":"true"`){
+				http.Error(w, "Not Found", http.StatusNotFound)
+			}
+
+			var data ViaCEP
+			err = json.Unmarshal(body, &data)
+			if err != nil {
+				log.Fatal(err)
+			}
+			local := data.Localidade
+			url2 := "http://api.weatherapi.com/v1/current.json?key=18525c8de5ac479f994185201250303&q=" + neturl.QueryEscape(local) + "&aqi=no"
+
+			req2, err := http.NewRequestWithContext(ctx, "GET", url2, nil)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			res2, err := zipkinClient.Do(req2)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+			switch res2.StatusCode {
+			case http.StatusBadRequest :
+				err = fmt.Errorf("invalid  zipcode in WeatherAPI")
+				fmt.Println(err)
+				os.Exit(1)
+			case http.StatusNotFound :
+					err = fmt.Errorf("can not find zipcode in WeatherAPI")
+					fmt.Println(err)
+					os.Exit(1)
+			case http.StatusOK :
+				body2, err := io.ReadAll(res2.Body)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+				}
+				defer res2.Body.Close()
+				if strings.Contains(string(body2), `"error":"true"`){
+					http.Error(w, "Not Found", http.StatusNotFound)
+				}
+				 
+				var data2 Weather
+				err = json.Unmarshal(body2, &data2)
+				if err != nil {
+					log.Fatal(err)
+				}
+				tempC := data2.Current.TempC
+				tempF := tempC*1.8 + 32
+				tempK := tempC + 273
+		
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusOK)
+				json.NewEncoder(w).Encode(map[string]interface{}{
+					"city":   local,
+					"temp_C": tempC,
+					"temp_F": tempF,
+					"temp_K": tempK,
+				})
+
+			}
+
+		}
+}
+func getOutboundIP() net.IP {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+
+	return localAddr.IP
 }

@@ -32,9 +32,10 @@ services:
       - "55679:55679" # zpages extension
       
 
-  serviceA:
-    container_name: serviceA
-    image: golang:latest
+  servicea:
+    container_name: servicea
+    build:
+      context: ./serviceA
     depends_on:
       - jaeger-all-in-one
       - otel-collector
@@ -43,9 +44,10 @@ services:
       - "8080:8080"
 
 
-  serviceB:
-    container_name: serviceB
-    image: golang:latest
+  serviceb:
+    container_name: serviceb
+    build:
+      context: ./serviceB
     depends_on:
       - jaeger-all-in-one
       - otel-collector

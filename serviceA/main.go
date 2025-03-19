@@ -25,9 +25,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/openzipkin/zipkin-go"
-	"github.com/openzipkin/zipkin-go/middleware/http"
+	zipkinhttp "github.com/openzipkin/zipkin-go/middleware/http"
 	"github.com/openzipkin/zipkin-go/model"
-	zipkinhttp "github.com/openzipkin/zipkin-go/model"
 	zipikinreporter "github.com/openzipkin/zipkin-go/reporter/http"
 )
 
@@ -48,18 +47,18 @@ func startOtel(ctx context.Context) {
 	),
 	)
 	if err != nil {
-		slog.Error("Contexterr", "failed to create context")
+		slog.Error("startOtel", "Contexterr", "failed to create context")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 
 	conn, err := grpc.NewClient("otel-collector:4317", grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		slog.Error("GRPCerr", "failed to create GRPC conection")
+		slog.Error("startOtel", "GRPCerr", "failed to create GRPC conection")
 	}
 	traceExporter, err := otlptracegrpc.New(ctx, otlptracegrpc.WithGRPCConn(conn))
 	if err != nil {
-		slog.Error("Traceerr", "failed to create trace exporter")
+		slog.Error("startOtel", "Traceerr", "failed to create trace exporter")
 	}
 	bsp := sdktrace.NewBatchSpanProcessor(traceExporter)
 	provider := sdktrace.NewTracerProvider(sdktrace.WithSampler(
@@ -109,7 +108,7 @@ func main() {
 	serverMidleware := zipkinhttp.NewServerMiddleware(tracer, zipkinhttp.TagResponseSize(true))
 
 	http.Handle("/", serverMidleware(router))
-	router.HandleFunc("POST /cep", cepValidatorHandler)
+	router.HandleFunc("POST /", cepValidatorHandler)
 
 	http.ListenAndServe(":8080", router)
 
@@ -128,7 +127,7 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 	ctx, span := OtelTracer.Start(ctx, "serviceA")
 	defer span.End()
 
-	//zipkin
+
 	zspan := zipkin.SpanFromContext(r.Context())
 	ctx = zipkin.NewContext(ctx, zspan)
 
@@ -146,6 +145,10 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cepValue := cep.Cep
+
+	// w.WriteHeader(http.StatusOK)
+	// w.Write([]byte(cepValue))
+
 	typecep := typeofObject(cep.Cep)
 	// validades cep
 	if len(cepValue) == 8 && typecep == "string" {
@@ -177,11 +180,11 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			w.Write([]byte(sbody))
-		case http.StatusNotFound:
-			http.Error(w, "not found", http.StatusNotFound)
-		case http.StatusUnprocessableEntity:
-			http.Error(w, "internal server error", http.StatusUnprocessableEntity)
-		}
+	case http.StatusNotFound:
+		http.Error(w, "not found", http.StatusNotFound)
+	case http.StatusUnprocessableEntity:
+		http.Error(w, "internal server error", http.StatusUnprocessableEntity)
+	}
 	}
 }
 
