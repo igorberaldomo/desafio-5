@@ -1,0 +1,11 @@
+POST HTTP://localhost:8080/
+Content-Type: "application/json"
+
+{
+    "cep": "39408078"
+}
+
+
+####
+
+GET HTTP://localhost:8081/?cep=39408078
