@@ -158,6 +158,7 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
+			
 		}
 
 		otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(req.Header))
