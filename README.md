@@ -1,3 +1,9 @@
+Para fazer as requisições:
+    Para inicializar o projeto suba o container cdocker composer
+    para testar o projeto envie uma requisição do tipo POST exemplo { "cep": "29902555" }
+    a requisição será valida somente sem tiver a variavel cep e o valor dessa variavel deve ter tamanho de 8 numeros sem letras e simbolos
+    para o endereço http://localhost/8080
+
 Objetivos:
 
     implementação de um projeto docker composer em que o serviço A irá receber um post de cep o serviço a somente o validará, ele irá chamar o serviço B, que irá realizar a pesquisa do cep para encontrar a cidade e em seguida usará o nome da cidade e retornar as temperaturas.
