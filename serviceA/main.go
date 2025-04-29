@@ -134,20 +134,21 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("{error: " + err.Error() + "}"))
 	}
 	defer r.Body.Close()
 
 	var cep cep
 	if error := json.Unmarshal(body, &cep); error != nil {
 		http.Error(w, "invalid zipcode", http.StatusUnprocessableEntity)
-		return
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte("{error: " + err.Error() + "}"))
 	}
 
 	cepValue := cep.Cep
-
-	// w.WriteHeader(http.StatusOK)
-	// w.Write([]byte(cepValue))
 
 	typecep := typeofObject(cep.Cep)
 	// validades cep
@@ -157,7 +158,9 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 		req, err := http.NewRequestWithContext(ctx, "get", url, nil)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("{error: " + err.Error() + "}"))
 			
 		}
 
@@ -167,7 +170,9 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			slog.Error("cepValidatorHandler", "err", err.Error())
-			return
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("{error: " + err.Error() + "}"))
 		}
 		slog.Info("status", "code", res.StatusCode)
 		switch res.StatusCode {
@@ -175,7 +180,9 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(res.Body)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte("{error: " + err.Error() + "}"))
 			}
 			defer res.Body.Close()
 			sbody := string(body)
@@ -184,9 +191,20 @@ func cepValidatorHandler(w http.ResponseWriter, r *http.Request) {
 			w.Write([]byte(sbody))
 	case http.StatusNotFound:
 		http.Error(w, "not found", http.StatusNotFound)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("{error: " + "not found" + "}"))	
 	case http.StatusUnprocessableEntity:
 		http.Error(w, "internal server error", http.StatusUnprocessableEntity)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte("{error: " + "internal server error" + "}"))
 	}
+	}else{
+		http.Error(w, "invalid cep", http.StatusUnprocessableEntity)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		w.Write([]byte("{error: " + "invalid cep" + "}"))
 	}
 }
 
