@@ -1,3 +1,4 @@
+#Clique  o arquivo de api.http e clique em send request
 Para fazer as requisições:
     Para inicializar o projeto suba o container cdocker composer
     para testar o projeto envie uma requisição do tipo POST exemplo { "cep": "29902555" }
